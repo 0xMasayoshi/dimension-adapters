@@ -27,6 +27,8 @@ const TOKENID_TO_CGID: Record<number, string> = {
     1: 'bitcoin',
     2: 'ethereum',
     3: 'tether',
+    4: 'binancecoin',
+    5: 'hyperliquid',
 };
 
 // AMMConfigUpdated transactions, ignore volume from these transactions

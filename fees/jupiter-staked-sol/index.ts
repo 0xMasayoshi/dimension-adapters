@@ -2,15 +2,19 @@ import { Dependencies, FetchOptions, SimpleAdapter } from "../../adapters/types"
 import { CHAIN } from "../../helpers/chains";
 import { getSqlFromFile, queryDuneSql } from "../../helpers/dune";
 import ADDRESSES from "../../helpers/coreAssets.json";
+import { METRIC } from "../../helpers/metrics";
 
 const STAKE_POOL_RESERVE_ACCOUNT = "FMAWbzuxsgbgndArunedwxXPA6sweaVUGGgadCpSxau2";
 const STAKE_POOL_WITHDRAW_AUTHORITY = "EMjuABxELpYWYEwjkKmQKBNCwdaFAy4QYAs6W9bDQDNw";
-// const LST_FEE_TOKEN_ACCOUNT = "DG399HKiLgKxGG176QiojyTtiSeqAurK6FVXGfBPTzSD"; // old
-const LST_FEE_TOKEN_ACCOUNT = "GbvFCpMqKX65gQ8KNeob9JUAL7vHCHFSg8YN5bnpPT8g";
+const LST_FEE_TOKEN_ACCOUNT_OLD = "DG399HKiLgKxGG176QiojyTtiSeqAurK6FVXGfBPTzSD"; // old
+const LST_FEE_TOKEN_ACCOUNT_NEW = "GbvFCpMqKX65gQ8KNeob9JUAL7vHCHFSg8YN5bnpPT8g";
 const LST_MINT = ADDRESSES.solana.JupSOL;
+let LST_FEE_TOKEN_ACCOUNT = 'GbvFCpMqKX65gQ8KNeob9JUAL7vHCHFSg8YN5bnpPT8g'
 
 const fetch = async (_a: any, _b: any, options: FetchOptions) => {
-
+  if (options.startOfDay <= 1760486400){
+    LST_FEE_TOKEN_ACCOUNT = LST_FEE_TOKEN_ACCOUNT_OLD;
+  }
   const query = getSqlFromFile("helpers/queries/sol-lst.sql", {
     start: options.startTimestamp,
     end: options.endTimestamp,
@@ -24,12 +28,15 @@ const fetch = async (_a: any, _b: any, options: FetchOptions) => {
 
   const dailyFees = options.createBalances();
   const dailyRevenue = options.createBalances();
+  const dailySupplySideRevenue = options.createBalances()
 
   results.forEach((row: any) => {
     if (row.metric_type === 'dailyFees') {
-      dailyFees.addCGToken("solana", row.amount || 0);
+      dailyFees.addCGToken("solana", row.amount || 0, METRIC.STAKING_REWARDS);
+      dailySupplySideRevenue.addCGToken("solana", row.amount || 0, METRIC.STAKING_REWARDS);
     } else if (row.metric_type === 'dailyRevenue') {
-      dailyRevenue.addCGToken("jupiter-staked-sol", row.amount || 0);
+      dailyRevenue.addCGToken("jupiter-staked-sol", row.amount || 0, METRIC.DEPOSIT_WITHDRAW_FEES);
+      dailyFees.addCGToken("jupiter-staked-sol", row.amount || 0, METRIC.DEPOSIT_WITHDRAW_FEES);
     }
   });
 
@@ -38,6 +45,7 @@ const fetch = async (_a: any, _b: any, options: FetchOptions) => {
     dailyRevenue,
     dailyProtocolRevenue: dailyRevenue,
     dailyHoldersRevenue: 0,
+    dailySupplySideRevenue
   };
 };
 
@@ -46,6 +54,7 @@ const methodology = {
   Revenue: 'Includes withdrawal fees and management fees collected by fee collector',
   ProtocolRevenue: 'Revenue going to treasury/team',
   HoldersRevenue: 'No revenue share to JUP token holders.',
+  SupplySideRevenue: 'All the staking rewards go to stakers'
 }
 
 const adapter: SimpleAdapter = {
@@ -55,7 +64,22 @@ const adapter: SimpleAdapter = {
   dependencies: [Dependencies.DUNE],
   chains: [CHAIN.SOLANA],
   start: "2024-06-09",
-  isExpensiveAdapter: true
+  isExpensiveAdapter: true,
+  breakdownMethodology: {
+    Fees: {
+      [METRIC.STAKING_REWARDS]: 'Staking rewards from staked SOL on Jupiter',
+      [METRIC.DEPOSIT_WITHDRAW_FEES]: 'Includes 0.1% deposit fee'
+    },
+    Revenue: {
+      [METRIC.DEPOSIT_WITHDRAW_FEES]: 'Includes 0.1% deposit fee'
+    },
+    ProtocolRevenue: {
+      [METRIC.DEPOSIT_WITHDRAW_FEES]: 'Includes 0.1% deposit fee'
+    },
+    SupplySideRevenue: {
+      [METRIC.STAKING_REWARDS]: 'All the staking rewards are distributed to jupSOL'
+    }
+  } ,
 };
 
 export default adapter;

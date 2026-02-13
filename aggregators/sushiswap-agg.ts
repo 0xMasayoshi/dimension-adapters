@@ -58,6 +58,7 @@ const CHAIN_ID: any = {
   [CHAIN.BERACHAIN]: 80094,
   [CHAIN.PLASMA]: 9745,
   [CHAIN.MONAD]: 143,
+  [CHAIN.MEGAETH]: 4326,
   [CHAIN.XLAYER]: 196,
 }
 
@@ -426,6 +427,7 @@ const RP10_ADDRESS: any = {
   [CHAIN.BERACHAIN]: '0xe89aab725a2b2c0656248dcccc894a04661be55a',
   [CHAIN.PLASMA]: '0xe89aab725a2b2c0656248dcccc894a04661be55a',
   [CHAIN.MONAD]: '0xe89aab725a2b2c0656248dcccc894a04661be55a',
+  [CHAIN.MEGAETH]: '0xe89aab725a2b2c0656248dcccc894a04661be55a',
   [CHAIN.XLAYER]: '0xe89aab725a2b2c0656248dcccc894a04661be55a',
 }
 
@@ -472,6 +474,7 @@ const RP11_ADDRESS: any = {
   [CHAIN.BERACHAIN]: '0xc10ee9031f2a0b84766a86b55a8d90f357910fb4',
   [CHAIN.PLASMA]: '0xc10ee9031f2a0b84766a86b55a8d90f357910fb4',
   [CHAIN.MONAD]: '0xc10ee9031f2a0b84766a86b55a8d90f357910fb4',
+  [CHAIN.MEGAETH]: '0xc10ee9031f2a0b84766a86b55a8d90f357910fb4',
   [CHAIN.XLAYER]: '0xc10ee9031f2a0b84766a86b55a8d90f357910fb4',
 }
 
@@ -523,6 +526,7 @@ const WNATIVE_ADDRESS: any = {
   [CHAIN.BERACHAIN]: ADDRESSES.berachain.WBERA,
   [CHAIN.PLASMA]: ADDRESSES.plasma.WXPL,
   [CHAIN.MONAD]: ADDRESSES.monad.WMON,
+  [CHAIN.MEGAETH]: '0x4200000000000000000000000000000000000006',
   [CHAIN.XLAYER]: ADDRESSES.xlayer.WOKB,
 }
 
@@ -540,7 +544,10 @@ interface Log {
 
 const fetch: FetchV2 = async ({ getLogs, createBalances, chain }): Promise<FetchResultV2> => {
   const dailyVolume = createBalances()
-
+  
+  const blacklistedTokens = getDefaultDexTokensBlacklisted(chain)
+  const whitelistedTokens = await getDefaultDexTokensWhitelisted({ chain: chain })
+  
   let logs: Array<Log> = [];
 
   if (RP4_ADDRESS[chain]) logs = logs.concat(await getLogs({ target: RP4_ADDRESS[chain], eventAbi: ROUTE_RP45_EVENT }))
@@ -554,14 +561,17 @@ const fetch: FetchV2 = async ({ getLogs, createBalances, chain }): Promise<Fetch
   if (RP10_ADDRESS[chain]) logs = logs.concat(await getLogs({ target: RP10_ADDRESS[chain], eventAbi: ROUTE_RP9_EVENT }))
   if (RP11_ADDRESS[chain]) logs = logs.concat(await getLogs({ target: RP11_ADDRESS[chain], eventAbi: ROUTE_RP9_EVENT }))
   
-  // count volune only from whitelisted tokens
-  const blacklistedTokens = getDefaultDexTokensBlacklisted(chain)
-  const whitelistedTokens = await getDefaultDexTokensWhitelisted({chain: chain})
   if (whitelistedTokens.length > 0) {
     logs = logs.filter((log: Log) => (whitelistedTokens.includes(formatAddress(log.tokenIn)) || whitelistedTokens.includes(formatAddress(log.tokenOut)))
       && !blacklistedTokens.includes(formatAddress(log.tokenIn))
       && !blacklistedTokens.includes(formatAddress(log.tokenOut))
     )
+  }
+  
+  // filter many scam/spam tokens on arbitrum
+  if (chain === CHAIN.ARBITRUM) {
+    // require both input and output tokens in whitelisted
+    logs = logs.filter((log: Log) => (whitelistedTokens.includes(formatAddress(log.tokenIn)) && whitelistedTokens.includes(formatAddress(log.tokenOut))))
   }
 
   if (useSushiAPIPrice(chain)) {
@@ -787,6 +797,10 @@ const adapters = {
   [CHAIN.MONAD]: {
     fetch,
     start: '2025-11-23'
+  },
+  [CHAIN.MEGAETH]: {
+    fetch,
+    start: '2026-02-08'
   },
   [CHAIN.XLAYER]: {
     fetch,

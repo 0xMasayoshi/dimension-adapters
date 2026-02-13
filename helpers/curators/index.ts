@@ -26,6 +26,7 @@ export interface CuratorConfig {
 interface Balances {
   dailyFees: sdk.Balances,
   dailyRevenue: sdk.Balances,
+  dailySupplySideRevenue?: sdk.Balances
 }
 
 interface VaultERC4626Info {
@@ -87,6 +88,8 @@ async function getMorphoVaultsV2(options: FetchOptions, owners: Array<string> | 
 async function getEulerVaults(options: FetchOptions, vaults: Array<string> | undefined, owners: Array<string> | undefined): Promise<Array<string>> {
   let eulerVaults = vaults ? vaults : []
 
+  const blacklistedVaults = EulerConfigs[options.chain] && EulerConfigs[options.chain].blacklistedVaults ? EulerConfigs[options.chain].blacklistedVaults : []
+
   if (owners && owners.length > 0) {
     for (const factory of EulerConfigs[options.chain].vaultFactories) {
       const getProxyListLength = await options.api.call({
@@ -114,6 +117,9 @@ async function getEulerVaults(options: FetchOptions, vaults: Array<string> | und
         });
         for (let i = 0; i < proxyAddresses.length; i++) {
           if (isOwner(proxyCreators[i], owners)) {
+            if (blacklistedVaults.includes(proxyAddresses[i].toLowerCase())) {
+              continue
+            }
             eulerVaults.push(proxyAddresses[i])
           }
         }
@@ -242,6 +248,48 @@ export async function getEulerVaultFee(options: FetchOptions, balances: Balances
 
       balances.dailyFees.add(vaultInfo[i].asset, interestEarnedBeforeFee, METRIC.ASSETS_YIELDS)
       balances.dailyRevenue.add(vaultInfo[i].asset, interestFee, METRIC.ASSETS_YIELDS)
+      if (balances.dailySupplySideRevenue) balances.dailySupplySideRevenue.add(vaultInfo[i].asset, interestEarnedBeforeFee - interestFee, METRIC.ASSETS_YIELDS)
+    }
+  }
+}
+
+async function getMorphoVaultV2Fee(options: FetchOptions, balances: Balances, vaults: Array<string>) {
+  const vaultInfo = await getVaultERC4626Info(options, vaults, true)
+  const vaultPerformanceFeeRates = await options.api.multiCall({
+    abi: ABI.morpho.performanceFee,
+    calls: vaultInfo.map(item => item.vault),
+    permitFailure: true,
+  })
+  const vaultManagementFeeRates = await options.api.multiCall({
+    abi: ABI.morpho.managementFee,
+    calls: vaultInfo.map(item => item.vault),
+    permitFailure: true,
+  })
+  
+  for (let i = 0; i < vaultInfo.length; i++) {
+    const growthRate = vaultInfo[i].rateAfter - vaultInfo[i].rateBefore
+
+    
+    if (growthRate > 0) {
+      const vaultPerformanceFeeRate = BigInt(vaultPerformanceFeeRates[i] ? vaultPerformanceFeeRates[i] : 0)
+      const vaultManagementFeeRate = BigInt(vaultManagementFeeRates[i] ? vaultManagementFeeRates[i] : 0)
+      
+      // morpho vault include fee directly to vault shares
+      // it mean that vault fees were added from vault token shares
+
+      // interest earned and distributed to vault deposited including fees
+      const interestEarnedIncludingFees = vaultInfo[i].balance * growthRate / BigInt(10**18)
+      
+      // interest earned by vault curator - performance fee
+      const interestPerformanceFee = interestEarnedIncludingFees * vaultPerformanceFeeRate / BigInt(1e18)
+      
+      // interest earned by vault curator - management fee
+      const timeElapsed = options.toTimestamp - options.fromTimestamp
+      const interestManagementFee = interestEarnedIncludingFees * vaultManagementFeeRate * BigInt(timeElapsed) / BigInt(1e18)
+
+      balances.dailyFees.add(vaultInfo[i].asset, interestEarnedIncludingFees, METRIC.ASSETS_YIELDS)
+      balances.dailyRevenue.add(vaultInfo[i].asset, interestPerformanceFee, METRIC.ASSETS_YIELDS)
+      balances.dailyRevenue.add(vaultInfo[i].asset, interestManagementFee, METRIC.ASSETS_YIELDS)
     }
   }
 }
@@ -262,13 +310,18 @@ export function getCuratorExport(curatorConfig: CuratorConfig): SimpleAdapter {
         let dailyRevenue = options.createBalances()
 
         // morpho meta vaults
-        let morphoVaults = await getMorphoVaults(options, vaults.morpho, vaults.morphoVaultOwners);
+        const morphoVaults = await getMorphoVaults(options, vaults.morpho, vaults.morphoVaultOwners);
+
         // morpho v2 vaults
-        morphoVaults = morphoVaults.concat(await getMorphoVaultsV2(options, vaults.morphoVaultV2Owners));
+        const morphoVaultsV2 = await getMorphoVaultsV2(options, vaults.morphoVaultV2Owners);
         
         const eulerVaults = await getEulerVaults(options, vaults.euler, vaults.eulerVaultOwners);
+
         if (morphoVaults.length > 0) {
           await getMorphoVaultFee(options, { dailyFees, dailyRevenue }, morphoVaults)
+        }
+        if (morphoVaultsV2.length > 0) {
+          await getMorphoVaultV2Fee(options, { dailyFees, dailyRevenue }, morphoVaultsV2)
         }
         if (eulerVaults.length > 0) {
           await getEulerVaultFee(options, { dailyFees, dailyRevenue }, eulerVaults)

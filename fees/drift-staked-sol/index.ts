@@ -4,13 +4,20 @@ import { Dependencies, FetchOptions } from "../../adapters/types";
 import { CHAIN } from "../../helpers/chains";
 import { getSqlFromFile, queryDuneSql } from "../../helpers/dune";
 import ADDRESSES from "../../helpers/coreAssets.json";
+import { METRIC } from "../../helpers/metrics";
 
 const STAKE_POOL_WITHDRAW_AUTHORITY = "6727ZvQ2YEz8jky1Z9fqDFG5mYuAvC9G34o2MxwzmrUK";
 const STAKE_POOL_RESERVE_ACCOUNT = "4RjzgujRmdadbLjyh2L1Qn5ECsQ1qfjaapTfeWKYtsC3";
-const LST_FEE_TOKEN_ACCOUNT = "5NJUMVJPVxN5huLKQ7tNxBv7LHxHDLwREUym5ekfdSgD";
+const LST_FEE_TOKEN_ACCOUNT_NEW = "4ipvqrPR7dvkRPJ9iHhAxY7NfcgCSrZw5KLH3K8aAbCM";
+const LST_FEE_TOKEN_ACCOUNT_OLD = "5NJUMVJPVxN5huLKQ7tNxBv7LHxHDLwREUym5ekfdSgD";
 const LST_MINT = ADDRESSES.solana.dSOL;
+let LST_FEE_TOKEN_ACCOUNT = '4ipvqrPR7dvkRPJ9iHhAxY7NfcgCSrZw5KLH3K8aAbCM'
 
 const fetch = async (_a: any, _b: any, options: FetchOptions) => {
+    if (options.startOfDay <= 1762646400){
+        LST_FEE_TOKEN_ACCOUNT = LST_FEE_TOKEN_ACCOUNT_OLD;
+    }
+
     const query = getSqlFromFile("helpers/queries/sol-lst.sql", {
         start: options.startTimestamp,
         end: options.endTimestamp,
@@ -24,12 +31,15 @@ const fetch = async (_a: any, _b: any, options: FetchOptions) => {
 
     const dailyFees = options.createBalances();
     const dailyRevenue = options.createBalances();
+    const dailySupplySideRevenue = options.createBalances()
 
     results.forEach((row: any) => {
         if (row.metric_type === 'dailyFees') {
-            dailyFees.addCGToken("solana", row.amount || 0);
+            dailyFees.addCGToken("solana", row.amount || 0, METRIC.STAKING_REWARDS);
+            dailySupplySideRevenue.addCGToken("solana", row.amount || 0, METRIC.STAKING_REWARDS);
         } else if (row.metric_type === 'dailyRevenue') {
-            dailyRevenue.addCGToken("drift-staked-sol", row.amount || 0);
+            dailyRevenue.addCGToken("drift-staked-sol", row.amount || 0, METRIC.DEPOSIT_WITHDRAW_FEES);
+            dailyFees.addCGToken("drift-staked-sol", row.amount || 0, METRIC.DEPOSIT_WITHDRAW_FEES);
         }
     });
 
@@ -38,6 +48,7 @@ const fetch = async (_a: any, _b: any, options: FetchOptions) => {
         dailyRevenue,
         dailyProtocolRevenue: dailyRevenue,
         dailyHoldersRevenue: 0,
+        dailySupplySideRevenue
     };
 };
 
@@ -46,6 +57,7 @@ const methodology = {
     Revenue: 'Includes withdrawal fees and management fees collected by fee collector',
     ProtocolRevenue: 'Revenue going to treasury/team',
     HoldersRevenue: 'No revenue share to DRIFT token holders',
+    SupplySideRevenue: 'All the staking rewards go to stakers'
 }
 
 export default {
@@ -55,5 +67,20 @@ export default {
     dependencies: [Dependencies.DUNE],
     start: "2024-08-26",
     methodology,
-    isExpensiveAdapter: true
+    isExpensiveAdapter: true,
+    breakdownMethodology: {
+        Fees: {
+          [METRIC.STAKING_REWARDS]: 'Staking rewards from staked SOL on Drift',
+          [METRIC.DEPOSIT_WITHDRAW_FEES]: 'Includes instant and delayed withdrawal fees'
+        },
+        Revenue: {
+          [METRIC.DEPOSIT_WITHDRAW_FEES]: 'Includes instant and delayed withdrawal fees'
+        },
+        ProtocolRevenue: {
+          [METRIC.DEPOSIT_WITHDRAW_FEES]: 'Includes instant and delayed withdrawal fees'
+        },
+        SupplySideRevenue: {
+          [METRIC.STAKING_REWARDS]: 'All the staking rewards are distributed to dSOL'
+        }
+      } ,
 };
